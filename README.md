@@ -1,4 +1,4 @@
-# codex-test
+# vibe-coding-test-test
 
 This repository contains a sample Chrome extension named **YouTube Transcript Controller**. The extension provides keyboard shortcuts for navigating the transcript while watching a YouTube video.
 
