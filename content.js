@@ -9,6 +9,26 @@ const TRANSCRIPT_CONTAINER_SELECTOR = "#segments-container";
 const ALT_TRANSCRIPT_SEGMENT_SELECTOR = '[role="button"][data-start]';
 const ALT_TRANSCRIPT_CONTAINER_SELECTOR = '[role="region"]';
 
+// Selectors for transcript button
+const TRANSCRIPT_BUTTON_SELECTORS = [
+  'button[aria-label*="transcript" i]',
+  'button[aria-label*="字幕" i]',
+  'yt-button-renderer[aria-label*="transcript" i]',
+  'yt-button-renderer[aria-label*="字幕" i]',
+  '[role="button"][aria-label*="transcript" i]',
+  '[role="button"][aria-label*="字幕" i]',
+];
+
+// More actions menu selectors
+const MORE_ACTIONS_BUTTON_SELECTORS = [
+  'button[aria-label*="more" i]',
+  'button[aria-label*="その他" i]',
+  'yt-button-renderer[aria-label*="more" i]',
+  'yt-button-renderer[aria-label*="その他" i]',
+  "#menu-button",
+  ".dropdown-trigger",
+];
+
 // Function to get all transcript segments with multiple fallback methods
 function getTranscriptSegments() {
   // Method 1: Standard selectors
@@ -52,6 +72,109 @@ function getTranscriptSegments() {
   }
 
   return [];
+}
+
+// Function to check if transcript panel is open
+function isTranscriptPanelOpen() {
+  const transcriptPanel = document.querySelector(TRANSCRIPT_PANEL_SELECTOR);
+  if (!transcriptPanel) return false;
+
+  const container = transcriptPanel.querySelector(
+    TRANSCRIPT_CONTAINER_SELECTOR
+  );
+  if (!container) return false;
+
+  // Check if it's visible and has content
+  const style = window.getComputedStyle(transcriptPanel);
+  const containerStyle = window.getComputedStyle(container);
+
+  return (
+    style.display !== "none" &&
+    containerStyle.display !== "none" &&
+    !transcriptPanel.hidden &&
+    !container.hidden
+  );
+}
+
+// Function to find and click transcript button
+function findAndClickTranscriptButton() {
+  // First, try to find direct transcript buttons
+  for (const selector of TRANSCRIPT_BUTTON_SELECTORS) {
+    const button = document.querySelector(selector);
+    if (button && button.offsetParent !== null) {
+      // Check if visible
+      button.click();
+      return true;
+    }
+  }
+
+  // If no direct button found, try to open "More actions" menu first
+  for (const selector of MORE_ACTIONS_BUTTON_SELECTORS) {
+    const moreButton = document.querySelector(selector);
+    if (moreButton && moreButton.offsetParent !== null) {
+      moreButton.click();
+
+      // Wait a bit for menu to open, then look for transcript button
+      setTimeout(() => {
+        for (const transcriptSelector of TRANSCRIPT_BUTTON_SELECTORS) {
+          const transcriptButton = document.querySelector(transcriptSelector);
+          if (transcriptButton && transcriptButton.offsetParent !== null) {
+            transcriptButton.click();
+            return true;
+          }
+        }
+
+        // Also try looking for text-based buttons in the menu
+        const menuItems = document.querySelectorAll(
+          'yt-formatted-string, .menu-item, [role="menuitem"]'
+        );
+        for (const item of menuItems) {
+          const text = item.textContent?.toLowerCase();
+          if (
+            text &&
+            (text.includes("transcript") ||
+              text.includes("字幕") ||
+              text.includes("文字起こし"))
+          ) {
+            item.click();
+            return true;
+          }
+        }
+      }, 100);
+
+      return true; // Return true since we tried
+    }
+  }
+
+  return false;
+}
+
+// Function to automatically open transcript panel
+function autoOpenTranscript(maxAttempts = 10, currentAttempt = 0) {
+  if (currentAttempt >= maxAttempts) {
+    return;
+  }
+
+  // Check if transcript is already open
+  if (isTranscriptPanelOpen()) {
+    return;
+  }
+
+  // Try to find and click transcript button
+  if (findAndClickTranscriptButton()) {
+    // Wait a bit and check if it opened
+    setTimeout(() => {
+      if (!isTranscriptPanelOpen()) {
+        // Try again if it didn't open
+        autoOpenTranscript(maxAttempts, currentAttempt + 1);
+      }
+    }, 1000);
+  } else {
+    // Button not found, try again after a delay
+    setTimeout(() => {
+      autoOpenTranscript(maxAttempts, currentAttempt + 1);
+    }, 2000);
+  }
 }
 
 // Function to get the start time of a segment
@@ -349,17 +472,46 @@ function waitForTranscriptPanel(
   }
 }
 
+// Function to wait for video to be ready
+function waitForVideoReady(callback, maxAttempts = 20, currentAttempt = 0) {
+  if (currentAttempt >= maxAttempts) {
+    return;
+  }
+
+  const video = document.querySelector("video.html5-main-video, video");
+  const playerContainer = document.querySelector(
+    "#movie_player, .html5-video-player"
+  );
+
+  if (video && playerContainer && video.readyState >= 2) {
+    // Video is ready
+    setTimeout(callback, 1000); // Wait a bit more for UI to be ready
+  } else {
+    setTimeout(() => {
+      waitForVideoReady(callback, maxAttempts, currentAttempt + 1);
+    }, 500);
+  }
+}
+
 // Initialize when page loads
 function initialize() {
   if (!isYouTubeVideoPage()) {
     return;
   }
 
-  waitForTranscriptPanel(() => {
-    // Test functionality
+  // Wait for video to be ready, then try to auto-open transcript
+  waitForVideoReady(() => {
+    // Try to auto-open transcript after a short delay
     setTimeout(() => {
-      testTranscriptFunctionality();
-    }, 1000);
+      autoOpenTranscript();
+    }, 2000);
+
+    // Also wait for transcript panel and test functionality
+    waitForTranscriptPanel(() => {
+      setTimeout(() => {
+        testTranscriptFunctionality();
+      }, 1000);
+    });
   });
 }
 
