@@ -1,133 +1,230 @@
 // content.js
-console.log("YouTube Transcript Navigator content script loaded.");
 
-const TRANSCRIPT_SEGMENT_SELECTOR = 'ytd-transcript-segment-renderer';
-const ACTIVE_TRANSCRIPT_SEGMENT_CLASS = 'active'; // This class might change, needs verification
-const TRANSCRIPT_PANEL_SELECTOR = 'ytd-transcript-renderer'; // Selector for the transcript panel itself
-const PLAYER_PROGRESS_TIME_SELECTOR = '.ytp-time-current'; // Selector for the current time display of the player
+// Updated selectors for YouTube's current transcript structure
+const TRANSCRIPT_SEGMENT_SELECTOR = "ytd-transcript-segment-renderer";
+const TRANSCRIPT_PANEL_SELECTOR = "ytd-transcript-renderer";
+const TRANSCRIPT_CONTAINER_SELECTOR = "#segments-container";
 
-// Function to get all transcript segments
+// Alternative selectors to try if main ones don't work
+const ALT_TRANSCRIPT_SEGMENT_SELECTOR = '[role="button"][data-start]';
+const ALT_TRANSCRIPT_CONTAINER_SELECTOR = '[role="region"]';
+
+// Function to get all transcript segments with multiple fallback methods
 function getTranscriptSegments() {
-  // First, check if the transcript panel is open and visible
+  // Method 1: Standard selectors
   const transcriptPanel = document.querySelector(TRANSCRIPT_PANEL_SELECTOR);
-  if (!transcriptPanel || transcriptPanel.hidden) {
-    console.log("Transcript panel is not open or visible.");
-    // Optionally, we could try to open it here, but that's more complex.
-    // For now, we'll just operate if it's already open.
-    return [];
+  if (transcriptPanel) {
+    const transcriptContainer = transcriptPanel.querySelector(
+      TRANSCRIPT_CONTAINER_SELECTOR
+    );
+    if (transcriptContainer) {
+      const segments = Array.from(
+        transcriptContainer.querySelectorAll(TRANSCRIPT_SEGMENT_SELECTOR)
+      );
+      if (segments.length > 0) {
+        return segments;
+      }
+    }
+
+    // Try alternative within the panel
+    const altSegments = Array.from(
+      transcriptPanel.querySelectorAll(TRANSCRIPT_SEGMENT_SELECTOR)
+    );
+    if (altSegments.length > 0) {
+      return altSegments;
+    }
   }
-  return Array.from(transcriptPanel.querySelectorAll(TRANSCRIPT_SEGMENT_SELECTOR));
+
+  // Method 2: Try alternative selectors
+  const altSegments = Array.from(
+    document.querySelectorAll(ALT_TRANSCRIPT_SEGMENT_SELECTOR)
+  );
+  if (altSegments.length > 0) {
+    return altSegments;
+  }
+
+  // Method 3: Try even more generic approach
+  const allSegments = Array.from(
+    document.querySelectorAll(TRANSCRIPT_SEGMENT_SELECTOR)
+  );
+  if (allSegments.length > 0) {
+    return allSegments;
+  }
+
+  return [];
+}
+
+// Function to get the start time of a segment
+function getSegmentStartTime(segment) {
+  // Try multiple ways to get the start time
+  const dataStart = segment.getAttribute("data-start");
+  if (dataStart) {
+    return parseFloat(dataStart);
+  }
+
+  const timestampElement = segment.querySelector("[data-start]");
+  if (timestampElement) {
+    return parseFloat(timestampElement.getAttribute("data-start"));
+  }
+
+  // Try to parse from text content
+  const timeText = segment.querySelector(
+    ".segment-timestamp, .ytd-transcript-segment-renderer"
+  )?.textContent;
+  if (timeText) {
+    const match = timeText.match(/(\d+):(\d+)/);
+    if (match) {
+      return parseInt(match[1]) * 60 + parseInt(match[2]);
+    }
+  }
+
+  return null;
 }
 
 // Function to find the currently active transcript segment
 function findCurrentActiveSegment(segments) {
-  if (!segments || segments.length === 0) return null;
-  // YouTube usually adds a class like 'active' or 'cue' to the currently playing segment
-  // Let's try a few common ones or check for attributes.
-  // The most reliable way is often to check which segment's timestamp matches the video's current time.
-  // However, directly clicking segments often makes them 'active' visually.
+  if (!segments || segments.length === 0) {
+    return null;
+  }
 
-  // First, try to find by a common 'active' class.
-  // Note: YouTube's actual class for active/current cue might be different,
-  // e.g., 'yt-core-attributed-string--active-cue', 'yt-formatted-string.active'
-  // or within a child element 'yt-formatted-string[is-active-cue]'
-  let activeSegment = segments.find(segment =>
-    segment.classList.contains(ACTIVE_TRANSCRIPT_SEGMENT_CLASS) || // Direct class
-    segment.classList.contains('yt-core-attributed-string--active-cue') || // New class
-    segment.querySelector('.yt-core-attributed-string--active-cue') || // Child with new class
-    segment.classList.contains('yt-formatted-string[is-active-cue]') // Another possible class
-  );
+  // Method 1: Look for active attributes/classes
+  for (const segment of segments) {
+    const transcriptText = segment.querySelector("yt-formatted-string");
+    if (transcriptText && transcriptText.hasAttribute("is-active-cue")) {
+      return segment;
+    }
 
-  if (activeSegment) return activeSegment;
+    if (
+      segment.classList.contains("active") ||
+      segment.classList.contains("current") ||
+      segment.hasAttribute("active") ||
+      segment.hasAttribute("aria-current") ||
+      segment.hasAttribute("aria-selected")
+    ) {
+      return segment;
+    }
 
-  // Fallback: If no class-based active segment is found,
-  // try to find the segment whose time range includes the current video time.
-  // This is more robust but requires parsing timestamps from each segment.
+    // Check child elements for active state
+    const activeChild = segment.querySelector(
+      '[aria-current="true"], [aria-selected="true"], .active'
+    );
+    if (activeChild) {
+      return segment;
+    }
+  }
+
+  // Method 2: Match by video current time
   try {
-    const videoPlayer = document.querySelector('.html5-main-video');
-    if (!videoPlayer) return null;
-    const currentTime = videoPlayer.currentTime; // Time in seconds
+    const videoPlayer = document.querySelector("video.html5-main-video, video");
+    if (!videoPlayer) {
+      return segments[0];
+    }
 
-    for (const segment of segments) {
-      const startTimeText = segment.querySelector('.segment-timestamp')?.textContent.trim();
-      if (!startTimeText) continue;
+    const currentTime = videoPlayer.currentTime;
 
-      const startTime = parseTimestampToSeconds(startTimeText);
-      // We need a way to determine the end time of the segment.
-      // This might require looking at the start time of the *next* segment
-      // or assuming a typical duration if not available.
-      // For simplicity, we'll consider a segment "active" if the video's current time
-      // is at or after its start time and before the next segment's start time.
+    let closestSegment = segments[0];
+    let closestDiff = Infinity;
 
-      const segmentIndex = segments.indexOf(segment);
-      let endTime;
-      if (segmentIndex < segments.length - 1) {
-        const nextStartTimeText = segments[segmentIndex + 1].querySelector('.segment-timestamp')?.textContent.trim();
-        if (nextStartTimeText) {
-          endTime = parseTimestampToSeconds(nextStartTimeText);
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      const startTime = getSegmentStartTime(segment);
+
+      if (startTime === null) continue;
+
+      // Find the segment whose start time is closest to but not greater than current time
+      if (startTime <= currentTime) {
+        const diff = currentTime - startTime;
+        if (diff < closestDiff) {
+          closestDiff = diff;
+          closestSegment = segment;
         }
-      } else {
-        // For the last segment, we can assume it's active until the video ends or for a few seconds.
-        endTime = startTime + 10; // Default duration of 10s for the last segment.
-      }
-
-      if (currentTime >= startTime && (endTime === undefined || currentTime < endTime)) {
-        // console.log(`Fallback: Active segment found by time: ${startTimeText}`);
-        return segment;
       }
     }
+
+    return closestSegment;
   } catch (e) {
-    console.error("Error finding active segment by time:", e);
+    // Fallback to first segment on error
   }
 
-  // If still no active segment, return the first one as a default if user wants to navigate.
-  return segments.length > 0 ? segments[0] : null;
-}
-
-// Helper function to parse HH:MM:SS or MM:SS timestamp to seconds
-function parseTimestampToSeconds(timestamp) {
-  const parts = timestamp.split(':').map(Number);
-  let seconds = 0;
-  if (parts.length === 3) { // HH:MM:SS
-    seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
-  } else if (parts.length === 2) { // MM:SS
-    seconds = parts[0] * 60 + parts[1];
-  } else if (parts.length === 1) { // SS
-    seconds = parts[0];
-  }
-  return seconds;
+  return segments[0];
 }
 
 // Function to scroll the transcript panel to make the segment visible
 function scrollSegmentIntoView(segment) {
-  if (segment && typeof segment.scrollIntoView === 'function') {
-    segment.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (segment && typeof segment.scrollIntoView === "function") {
+    segment.scrollIntoView({ behavior: "smooth", block: "center" });
   }
+}
+
+// Enhanced function to click a transcript segment
+function clickTranscriptSegment(segment) {
+  if (!segment) {
+    return false;
+  }
+
+  try {
+    // Method 1: Try clicking elements with data-start attribute
+    const dataStartElement = segment.querySelector("[data-start]");
+    if (dataStartElement) {
+      dataStartElement.click();
+      scrollSegmentIntoView(segment);
+      return true;
+    }
+
+    // Method 2: Try clicking the segment itself if it has data-start
+    if (segment.hasAttribute("data-start")) {
+      segment.click();
+      scrollSegmentIntoView(segment);
+      return true;
+    }
+
+    // Method 3: Look for clickable children
+    const clickableChild = segment.querySelector(
+      'button, [role="button"], .ytd-transcript-segment-renderer'
+    );
+    if (clickableChild) {
+      clickableChild.click();
+      scrollSegmentIntoView(segment);
+      return true;
+    }
+
+    // Method 4: Try clicking the segment directly
+    segment.click();
+    scrollSegmentIntoView(segment);
+
+    // Method 5: Dispatch a proper click event
+    const clickEvent = new MouseEvent("click", {
+      view: window,
+      bubbles: true,
+      cancelable: true,
+    });
+    segment.dispatchEvent(clickEvent);
+
+    return true;
+  } catch (e) {
+    // Silently fail
+  }
+
+  return false;
 }
 
 // Function to go to the previous transcript segment
 function goToPreviousTranscript() {
   const segments = getTranscriptSegments();
   if (segments.length === 0) {
-    console.log("No transcript segments found to go to previous.");
     return;
   }
 
-  let currentActive = findCurrentActiveSegment(segments);
-  let currentIndex = currentActive ? segments.indexOf(currentActive) : -1;
+  const currentActive = findCurrentActiveSegment(segments);
+  const currentIndex = currentActive ? segments.indexOf(currentActive) : -1;
 
   if (currentIndex > 0) {
     const prevSegment = segments[currentIndex - 1];
-    prevSegment.click(); // Clicking the segment usually seeks the video
-    scrollSegmentIntoView(prevSegment);
-    console.log("Clicked previous transcript segment.");
-  } else if (segments.length > 0 && currentIndex === -1) {
-    // If no active segment, clicking 'previous' could go to the first.
-    segments[0].click();
-    scrollSegmentIntoView(segments[0]);
-    console.log("No active segment, clicked first transcript segment as previous.");
+    clickTranscriptSegment(prevSegment);
   } else {
-    console.log("Already at the first transcript segment or no active segment found.");
+    // Go to first segment
+    const firstSegment = segments[0];
+    clickTranscriptSegment(firstSegment);
   }
 }
 
@@ -135,17 +232,15 @@ function goToPreviousTranscript() {
 function replayCurrentTranscript() {
   const segments = getTranscriptSegments();
   if (segments.length === 0) {
-    console.log("No transcript segments found to replay.");
     return;
   }
 
-  let currentActive = findCurrentActiveSegment(segments);
+  const currentActive = findCurrentActiveSegment(segments);
   if (currentActive) {
-    currentActive.click(); // Clicking the segment usually seeks the video to its start
-    scrollSegmentIntoView(currentActive);
-    console.log("Clicked (replayed) current transcript segment.");
+    clickTranscriptSegment(currentActive);
   } else {
-    console.log("No active transcript segment found to replay.");
+    const firstSegment = segments[0];
+    clickTranscriptSegment(firstSegment);
   }
 }
 
@@ -153,71 +248,159 @@ function replayCurrentTranscript() {
 function goToNextTranscript() {
   const segments = getTranscriptSegments();
   if (segments.length === 0) {
-    console.log("No transcript segments found to go to next.");
     return;
   }
 
-  let currentActive = findCurrentActiveSegment(segments);
-  let currentIndex = currentActive ? segments.indexOf(currentActive) : -1;
+  const currentActive = findCurrentActiveSegment(segments);
+  const currentIndex = currentActive ? segments.indexOf(currentActive) : -1;
 
   if (currentIndex !== -1 && currentIndex < segments.length - 1) {
     const nextSegment = segments[currentIndex + 1];
-    nextSegment.click(); // Clicking the segment usually seeks the video
-    scrollSegmentIntoView(nextSegment);
-    console.log("Clicked next transcript segment.");
-  } else if (segments.length > 0 && currentIndex === -1) {
-    // If no active segment, clicking 'next' could go to the first as well.
-    segments[0].click();
-    scrollSegmentIntoView(segments[0]);
-    console.log("No active segment, clicked first transcript segment as next.");
-  } else {
-    console.log("Already at the last transcript segment or no active segment found.");
+    clickTranscriptSegment(nextSegment);
+  } else if (currentIndex === -1 && segments.length > 0) {
+    // No current segment, go to first
+    const firstSegment = segments[0];
+    clickTranscriptSegment(firstSegment);
   }
 }
 
-// Event listener for keyboard shortcuts
-document.addEventListener('keydown', function(event) {
-  if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA' || event.target.isContentEditable) {
+// Enhanced event listener for keyboard shortcuts
+document.addEventListener("keydown", function (event) {
+  // Ignore if user is typing in input fields
+  if (
+    event.target.tagName === "INPUT" ||
+    event.target.tagName === "TEXTAREA" ||
+    event.target.isContentEditable ||
+    event.target.closest('[contenteditable="true"]')
+  ) {
     return;
   }
 
-  // Check if the key is one of ours, and if so, prevent default YouTube shortcuts if necessary
-  // (e.g. 'S' might be a YouTube shortcut if not handled)
-  // However, for A, S, D, they are not common global YouTube shortcuts.
-  // If they were (e.g. 'K' for play/pause), event.preventDefault() would be important.
+  // Ignore if modifier keys are pressed
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    return;
+  }
 
-  switch (event.key.toUpperCase()) {
-    case 'A':
-      // event.preventDefault(); // Uncomment if 'A' conflicts with YouTube
+  const key = event.key.toUpperCase();
+
+  switch (key) {
+    case "A":
+      event.preventDefault();
       goToPreviousTranscript();
       break;
-    case 'S':
-      // event.preventDefault(); // Uncomment if 'S' conflicts with YouTube
+    case "S":
+      event.preventDefault();
       replayCurrentTranscript();
       break;
-    case 'D':
-      // event.preventDefault(); // Uncomment if 'D' conflicts with YouTube
+    case "D":
+      event.preventDefault();
       goToNextTranscript();
       break;
   }
 });
 
-// Observer to detect when transcript is loaded or becomes visible
-// YouTube dynamically loads content, so we might need to wait.
-const observer = new MutationObserver((mutationsList, observer) => {
-    for(const mutation of mutationsList) {
-        if (mutation.type === 'childList' || mutation.type === 'attributes') {
-            const transcriptPanel = document.querySelector(TRANSCRIPT_PANEL_SELECTOR);
-            if (transcriptPanel && !transcriptPanel.hidden) {
-                // console.log("Transcript panel detected or became visible.");
-                // Potentially initialize or re-check segments here if needed
-                // For now, functions get segments on demand.
-            }
+// Function to check if we're on a YouTube video page
+function isYouTubeVideoPage() {
+  return (
+    window.location.hostname === "www.youtube.com" &&
+    window.location.pathname === "/watch" &&
+    window.location.search.includes("v=")
+  );
+}
+
+// Function to test transcript functionality
+function testTranscriptFunctionality() {
+  const segments = getTranscriptSegments();
+
+  if (segments.length === 0) {
+    return false;
+  }
+
+  // Test getting start times
+  for (let i = 0; i < Math.min(segments.length, 5); i++) {
+    const segment = segments[i];
+    getSegmentStartTime(segment);
+  }
+
+  // Test finding active segment
+  const activeSegment = findCurrentActiveSegment(segments);
+  const activeIndex = activeSegment ? segments.indexOf(activeSegment) : -1;
+
+  return true;
+}
+
+// Function to wait for transcript panel to be available
+function waitForTranscriptPanel(
+  callback,
+  maxAttempts = 15,
+  currentAttempt = 0
+) {
+  if (currentAttempt >= maxAttempts) {
+    return;
+  }
+
+  const transcriptPanel = document.querySelector(TRANSCRIPT_PANEL_SELECTOR);
+  if (transcriptPanel) {
+    callback();
+  } else {
+    setTimeout(() => {
+      waitForTranscriptPanel(callback, maxAttempts, currentAttempt + 1);
+    }, 1000);
+  }
+}
+
+// Initialize when page loads
+function initialize() {
+  if (!isYouTubeVideoPage()) {
+    return;
+  }
+
+  waitForTranscriptPanel(() => {
+    // Test functionality
+    setTimeout(() => {
+      testTranscriptFunctionality();
+    }, 1000);
+  });
+}
+
+// Observer to detect when transcript is loaded or page changes
+const observer = new MutationObserver((mutationsList) => {
+  for (const mutation of mutationsList) {
+    if (mutation.type === "childList") {
+      // Check if we navigated to a new video
+      if (isYouTubeVideoPage()) {
+        const transcriptPanel = document.querySelector(
+          TRANSCRIPT_PANEL_SELECTOR
+        );
+        if (transcriptPanel) {
+          // Test after a short delay
+          setTimeout(() => {
+            testTranscriptFunctionality();
+          }, 500);
         }
+      }
     }
+  }
 });
 
-// Start observing the body for changes, to detect when transcript panel might appear
-observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+// Start observing
+observer.observe(document.body, {
+  childList: true,
+  subtree: true,
+});
 
-console.log("YouTube Transcript Navigator event listeners and transcript logic set up.");
+// Initialize immediately and also when DOM is ready
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initialize);
+} else {
+  initialize();
+}
+
+// Also initialize on page navigation (YouTube is SPA)
+let currentUrl = window.location.href;
+setInterval(() => {
+  if (window.location.href !== currentUrl) {
+    currentUrl = window.location.href;
+    setTimeout(initialize, 1000);
+  }
+}, 1000);
