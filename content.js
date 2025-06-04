@@ -17,6 +17,8 @@ const TRANSCRIPT_BUTTON_SELECTORS = [
   'yt-button-renderer[aria-label*="字幕" i]',
   '[role="button"][aria-label*="transcript" i]',
   '[role="button"][aria-label*="字幕" i]',
+  'button[aria-label*="文字起こし" i]',
+  'yt-button-renderer[aria-label*="文字起こし" i]',
 ];
 
 // More actions menu selectors
@@ -27,6 +29,17 @@ const MORE_ACTIONS_BUTTON_SELECTORS = [
   'yt-button-renderer[aria-label*="その他" i]',
   "#menu-button",
   ".dropdown-trigger",
+];
+
+// Description "more" button selectors
+const DESCRIPTION_MORE_BUTTON_SELECTORS = [
+  "#description-inline-expander button",
+  "#description .more-button",
+  "ytd-text-inline-expander-renderer button",
+  "yt-formatted-string #expand",
+  '[aria-label*="more" i]:not([aria-label*="actions" i])',
+  ".description-more-button",
+  "#more",
 ];
 
 // Function to get all transcript segments with multiple fallback methods
@@ -96,6 +109,53 @@ function isTranscriptPanelOpen() {
   );
 }
 
+// Function to expand description if needed
+function expandDescription() {
+  return new Promise((resolve) => {
+    // Look for description "more" button
+    for (const selector of DESCRIPTION_MORE_BUTTON_SELECTORS) {
+      const moreButton = document.querySelector(selector);
+      if (moreButton && moreButton.offsetParent !== null) {
+        // Check if it's actually a "more" button by looking at text content
+        const buttonText = moreButton.textContent?.toLowerCase();
+        if (
+          buttonText &&
+          (buttonText.includes("more") ||
+            buttonText.includes("さらに") ||
+            buttonText.includes("もっと"))
+        ) {
+          moreButton.click();
+          // Wait for description to expand
+          setTimeout(resolve, 1000);
+          return;
+        }
+      }
+    }
+
+    // Also try looking for text-based "more" links
+    const textElements = document.querySelectorAll("span, a, button");
+    for (const element of textElements) {
+      const text = element.textContent?.toLowerCase().trim();
+      if (
+        text === "more" ||
+        text === "...more" ||
+        text === "さらに表示" ||
+        text === "もっと見る"
+      ) {
+        if (element.offsetParent !== null) {
+          // Check if visible
+          element.click();
+          setTimeout(resolve, 1000);
+          return;
+        }
+      }
+    }
+
+    // No more button found, resolve immediately
+    resolve();
+  });
+}
+
 // Function to find and click transcript button
 function findAndClickTranscriptButton() {
   // First, try to find direct transcript buttons
@@ -150,7 +210,7 @@ function findAndClickTranscriptButton() {
 }
 
 // Function to automatically open transcript panel
-function autoOpenTranscript(maxAttempts = 10, currentAttempt = 0) {
+async function autoOpenTranscript(maxAttempts = 10, currentAttempt = 0) {
   if (currentAttempt >= maxAttempts) {
     return;
   }
@@ -158,6 +218,11 @@ function autoOpenTranscript(maxAttempts = 10, currentAttempt = 0) {
   // Check if transcript is already open
   if (isTranscriptPanelOpen()) {
     return;
+  }
+
+  // First, expand description if this is the first attempt
+  if (currentAttempt === 0) {
+    await expandDescription();
   }
 
   // Try to find and click transcript button
