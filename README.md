@@ -4,12 +4,12 @@ This repository contains a sample Chrome extension named **YouTube Transcript Na
 
 ## Features
 
-### 🚀 Auto-Open Transcript
+### 🔧 Semi-Automatic Transcript Opening
 
-- **Automatically opens the transcript panel** when you navigate to a YouTube video page
-- **Smart description expansion**: Automatically clicks "...more" buttons in video descriptions to reveal transcript options
+- **Assists with transcript access**: Helps locate and open transcript panels after description expansion
+- **Smart transcript detection**: Automatically finds transcript buttons in various YouTube layouts
 - **Multi-language support**: Works with both English and Japanese YouTube interfaces
-- **Intelligent retry system**: Attempts multiple strategies to locate and open the transcript panel
+- **Intelligent retry system**: Attempts multiple strategies to locate transcript options
 
 ### ⌨️ Keyboard Navigation
 
@@ -32,11 +32,11 @@ This repository contains a sample Chrome extension named **YouTube Transcript Na
 
 ## Usage
 
-### Automatic Operation
+### Semi-Automatic Operation
 
 1. **Navigate to any YouTube video** (e.g., `https://www.youtube.com/watch?v=VIDEO_ID`)
-2. **Wait 2-3 seconds** - the extension will automatically:
-   - Expand the video description if needed
+2. **Manually click "...more" in the video description** to expand it (if needed)
+3. **The extension will then automatically**:
    - Locate and click the transcript button
    - Open the transcript panel
 
@@ -67,10 +67,16 @@ The extension uses multiple fallback strategies to ensure reliable transcript ac
 
 If the transcript doesn't open automatically:
 
-1. **Check if transcript is available** - not all videos have transcripts
-2. **Manually open transcript** once, then reload the page
-3. **Ensure video description is expanded** - some transcripts are hidden behind "...more"
+1. **Manually click "...more"** in the video description to expand it
+2. **Check if transcript is available** - not all videos have transcripts
+3. **Look for the transcript button** - it should appear after expanding the description
 4. **Wait a few seconds** - the extension needs time to detect page changes
+
+### Common Issues
+
+- **Description needs manual expansion**: YouTube's dynamic loading sometimes requires manual clicking of the "...more" button
+- **No transcript available**: Some videos don't have auto-generated or manual transcripts
+- **Different layouts**: YouTube Premium and regular YouTube may have slightly different layouts
 
 ## Browser Compatibility
 
